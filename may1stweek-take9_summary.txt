@@ -1,0 +1,40 @@
+AEP OVERTIME CALCULATION REPORT
+==================================================
+Generated: 2025-05-23 14:47:28
+
+OVERALL SUMMARY
+--------------------
+Total Employees: 257
+Total Jobs Processed: 541
+Total Regular Hours: 4069.00
+Total Overtime Hours: 354.75
+Total Hours: 4423.75
+
+✅ VALIDATION: No weeks exceed 40 regular hours
+
+📊 MULTI-WEEK EMPLOYEES: 3 employees work across multiple weeks
+Multi-week employee breakdown:
+  ✅ CAYER, Crystal M: Week 2025-04-21: 10.0h, Week 2025-04-28: 34.0h (max: 34.0h)
+  ✅ DISBRO, Missy: Week 2025-04-21: 10.0h, Week 2025-04-28: 34.0h (max: 34.0h)
+  ✅ DIXON, Brett: Week 2025-04-21: 0.0h, Week 2025-04-28: 13.5h (max: 13.5h)
+
+OVERTIME BREAKDOWN
+--------------------
+Call Out: 22 jobs, 133.50 hours
+Over 10 Hours/Day: 9 jobs, 16.00 hours
+Over 40 Hours/Week: 11 jobs, 42.75 hours
+Pre-Split in Source Data: 124 jobs, 153.50 hours
+Sunday Work: 2 jobs, 9.00 hours
+
+TOP 10 EMPLOYEES BY TOTAL HOURS
+-----------------------------------
+WILLINGHAM, Corey Esq. L: 50.50h (40.00 reg, 10.50 OT)
+HART, Kayla: 49.50h (40.00 reg, 9.50 OT)
+BAXTER, Alan L: 49.50h (40.00 reg, 9.50 OT)
+ASHLEY, Tyler J: 47.00h (40.00 reg, 7.00 OT)
+CAYER, Crystal M: 46.25h (44.00 reg, 2.25 OT)
+SMITH, Aaron D: 46.25h (40.00 reg, 6.25 OT)
+DISBRO, Missy: 46.25h (44.00 reg, 2.25 OT)
+SHARP, Dale Jr. L: 42.00h (40.00 reg, 2.00 OT)
+BAKER, Craig: 41.75h (40.00 reg, 1.75 OT)
+COONCE, James: 41.75h (40.00 reg, 1.75 OT)

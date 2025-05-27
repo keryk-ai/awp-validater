@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Processing Results - AEP Overtime Calculator{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="text-success">Processing Complete!</h2>
+            <a href="{{ url_for('download_file') }}" class="btn btn-success btn-lg">
+                Download Results ({{ download_filename }})
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                <h3 class="text-primary">{{ summary.total_employees }}</h3>
+                <p class="card-text">Employees</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                <h3 class="text-info">{{ summary.total_jobs }}</h3>
+                <p class="card-text">Jobs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                <h3 class="text-success">{{ "%.1f"|format(summary.total_regular) }}</h3>
+                <p class="card-text">Regular Hours</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                <h3 class="text-warning">{{ "%.1f"|format(summary.total_ot) }}</h3>
+                <p class="card-text">Overtime Hours</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                <h3 class="text-secondary">{{ "%.1f"|format(summary.total_hours) }}</h3>
+                <p class="card-text">Total Hours</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card summary-card text-center">
+            <div class="card-body">
+                {% if summary.compliance_status == "COMPLIANT" %}
+                    <h3 class="text-success">✓</h3>
+                    <p class="card-text">Compliant</p>
+                {% else %}
+                    <h3 class="text-danger">⚠</h3>
+                    <p class="card-text">Issues Found</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4>Employee Summary (Top 10)</h4>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Employee</th>
+                                <th>Max Weekly Regular</th>
+                                <th>Total OT Hours</th>
+                                <th>Total Jobs</th>
+                                <th>Weeks Worked</th>
+                                <th>Compliance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for emp in employee_summary %}
+                            <tr>
+                                <td><strong>{{ emp.employee_name }}</strong></td>
+                                <td>{{ "%.1f"|format(emp.max_weekly_regular) }}h</td>
+                                <td>{{ "%.1f"|format(emp.total_overtime_hours) }}h</td>
+                                <td>{{ emp.jobs_processed }}</td>
+                                <td>{{ emp.weeks_worked }}</td>
+                                <td>
+                                    {% if emp.compliance_status == "COMPLIANT" %}
+                                        <span class="badge bg-success compliance-badge">✓ Compliant</span>
+                                    {% else %}
+                                        <span class="badge bg-warning compliance-badge">⚠ Check</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4>Detailed Report</h4>
+            </div>
+            <div class="card-body">
+                <pre class="report-section">{{ detailed_report }}</pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4 mb-5">
+    <div class="col-12 text-center">
+        <a href="{{ url_for('download_file') }}" class="btn btn-success btn-lg me-3">
+            Download Excel Results
+        </a>
+        <a href="{{ url_for('index') }}" class="btn btn-outline-primary btn-lg">
+            Process Another File
+        </a>
+    </div>
+</div>
+{% endblock %}

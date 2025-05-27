@@ -1,0 +1,34 @@
+AEP OVERTIME CALCULATION REPORT
+==================================================
+Generated: 2025-05-25 11:38:06
+
+OVERALL SUMMARY
+--------------------
+Total Employees: 229
+Total Jobs Processed: 624
+Total Regular Hours: 4431.00
+Total Overtime Hours: 437.25
+Total Hours: 4868.25
+
+✅ VALIDATION: No weeks exceed 40 regular hours
+
+OVERTIME BREAKDOWN
+--------------------
+Call Out: 17 jobs, 65.75 hours
+Over 10 Hours/Day: 7 jobs, 18.25 hours
+Over 40 Hours/Week: 36 jobs, 180.50 hours
+Pre-Split in Source Data: 97 jobs, 166.50 hours
+Sunday Work: 8 jobs, 53.50 hours
+
+TOP 10 EMPLOYEES BY TOTAL HOURS
+-----------------------------------
+TEAL, Michael P: 55.25h (40.00 reg, 15.25 OT)
+WICKS, Frank B: 55.25h (40.00 reg, 15.25 OT)
+SMITH, Aaron D: 53.50h (40.00 reg, 13.50 OT)
+HOLLEN, Bryan: 52.25h (40.00 reg, 12.25 OT)
+HETTINGER, Mike A: 52.25h (40.00 reg, 12.25 OT)
+WILLINGHAM, Corey Esq. L: 51.75h (40.00 reg, 11.75 OT)
+HART, Kayla: 50.75h (40.00 reg, 10.75 OT)
+WILLIAMSON, Marla: 49.75h (40.00 reg, 9.75 OT)
+GILLESPIE, Ryan I T: 49.75h (40.00 reg, 9.75 OT)
+GILLESPIE, Travis R: 49.75h (40.00 reg, 9.75 OT)
