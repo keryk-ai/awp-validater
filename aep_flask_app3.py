@@ -44,20 +44,20 @@ class AEPOvertimeCalculator:
             "404 S Frances St", "2825 Prairie Ave"
         ]
         
-        # Work Order Validation Regexes:
-        # 1. Standard AEP work order format: 3 letters + 7 digits (e.g., DAP0413021)
-        self.CORE_WORK_ORDER_STANDARD_REGEX = re.compile(r'([A-Z]{3}\d{7})', re.IGNORECASE)
-        # 2. Single-letter prefix work order format (e.g., G0000170)
-        self.CORE_WORK_ORDER_SINGLE_LETTER_REGEX = re.compile(r'([A-Z]\d{7})', re.IGNORECASE)
-
-        # Allowed prefixes for standard 3-letter + 7-digit work orders
-        # As per "DAP, DKP, DIM, DKY, BKP, BAP (any combination of upper or lowercase)"
-        self.ALLOWED_WO_PREFIXES = {'DAP', 'DKP', 'DIM', 'DKY', 'BKP', 'BAP'}
-        # Prefixes that trigger special handling for Forestry accounts (e.g., G or DIM)
-        self.FORESTRY_WO_INDICATORS = {'G', 'DIM'} 
+        # Work Order Validation:
+        # Regex for acceptable core work order numbers (e.g., DAP0413021)
+        # It matches 3 letters (case-insensitive, e.g., DAP, DKP, DIM, DKY, BKP, BAP)
+        # followed by exactly 7 digits.
+        self.CORE_WORK_ORDER_REGEX = re.compile(r'([A-Z]{3}\d{7})', re.IGNORECASE)
 
         # Invalid contact names for sign-off as specified in transcripts.
         self.INVALID_CONTACT_NAMES = {'PAT DENNEY', 'PAT DENNY'}
+
+        # NOTE: self.VALID_WORK_ORDER_NUMBERS, self.BILL_TO_ACCOUNT_REGION_MAP,
+        # and self.SPECIFIC_WORK_ORDER_LENGTH are no longer used for Client Job # validation
+        # as per latest requirements. The validation for Client Job # is now based on:
+        # 1. Whether a core '3 letters + 7 digits' pattern can be extracted.
+        # 2. Whether the total length of the 'Client Job #' string is more than 10 characters.
 
 
     def parse_input_file(self, file_path: str) -> pd.DataFrame:
@@ -162,92 +162,87 @@ class AEPOvertimeCalculator:
         return df_renamed
     
     def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        print(f"\n--- Starting _clean_data. Initial records: {len(df)} ---")
+        """
+        Cleans and validates data:
+        - Filters out records with missing essential info.
+        - Detects and logs exact duplicate records, removing them from main processing.
+        - Refines 'is_call_out' flag based on 'Item Number'.
+        - Filters out records with invalid date/time formats.
+        - Performs job-level validations (line shop, work order, invalid contact).
+        - Consolidates pre-split records.
+        """
+        initial_record_count = len(df)
         
-        # Ensure all columns are strings for consistent comparison in deduplication/validation
-        df_cleaned = df.copy()
-        string_cols = ['employee_name', 'start_time', 'end_time', 'is_call_out', 
-                       'job_id', 'item_number', 'client_job_number', 'contact_name', 
-                       'bill_to_account', 'job_address', 'Line_Note', 'reported_hours', # Include reported_hours to string for robust comparison
-                       'Lunch Deduction' # Include original for parsing later
-                      ]
-        for col in string_cols:
-            if col in df_cleaned.columns:
-                df_cleaned[col] = df_cleaned[col].astype(str).fillna('').str.strip()
-            else: # Ensure all required_columns are created first
-                df_cleaned[col] = ''
-
-
         # Step 1: Filter out rows with missing essential data (employee name, start/end times)
-        initial_record_count = len(df_cleaned) # Use df_cleaned here
-        df_cleaned = df_cleaned.dropna(subset=['employee_name', 'start_time', 'end_time']).copy()
+        df_cleaned = df.dropna(subset=['employee_name', 'start_time', 'end_time']).copy()
         df_cleaned = df_cleaned[df_cleaned['employee_name'].str.strip() != ''].copy()
         
         if len(df_cleaned) < initial_record_count:
             filtered_essential_count = initial_record_count - len(df_cleaned)
-            print(f"  Filtered out {filtered_essential_count} records due to missing essential data (employee name or times). Remaining: {len(df_cleaned)}")
+            print(f"Filtered out {filtered_essential_count} records due to missing essential data (employee name or times).")
+            # For comprehensive logging, these filtered rows could also be added to self.filtered_data
+            # if df_cleaned.empty: return pd.DataFrame() # Handle case where all rows are filtered
         
         # Step 2: Detect and log exact duplicate records, then remove duplicates for processing accuracy.
         # This prevents double-counting hours for identical entries.
-        # REDUCED: Columns that define a unique "record" to detect true duplicates.
-        # 'reported_hours' and 'item_number' are often different in pre-split, and reported_hours can be blank.
-        # The true "identity" of a job should be its employee, job ID, and time window.
+        # Columns that define a unique "record" to detect true duplicates
         duplicate_check_cols = [
             'employee_name', 'job_id', 'start_time', 'end_time', 
+            'reported_hours', 'item_number', 'is_call_out', 'lunch_deduction',
             'client_job_number', 'contact_name', 'bill_to_account', 'job_address', 'Line_Note'
         ]
+        # Ensure all columns exist before using them in duplicated()
+        for col in duplicate_check_cols:
+            if col not in df_cleaned.columns:
+                df_cleaned[col] = '' # Add empty column if not present
         
         # Find all occurrences of duplicated rows (keep=False marks all as True)
-        # Apply duplicated on df_cleaned, not df.
         duplicated_rows_identified = df_cleaned[df_cleaned.duplicated(subset=duplicate_check_cols, keep=False)].copy()
         
         if not duplicated_rows_identified.empty:
-            print(f"  Found {len(duplicated_rows_identified)} instances of exact duplicate records. Logging as validation exceptions.")
-            # Log each unique duplicate set only once, or each instance that is part of a duplicate group
-            # We want to log each row that IS a duplicate, not just the first one of a group
-            for idx, row in duplicated_rows_identified.iterrows():
-                # Avoid logging the same duplicate row multiple times if it was already caught
-                # This ensures each physical row in the input CSV that is a duplicate is flagged once.
-                # Adding current index to issues to differentiate.
+            print(f"Found {len(duplicated_rows_identified)} instances of exact duplicate records. Logging as validation exceptions.")
+            # Log each unique duplicate set only once in validation_exceptions for clarity
+            for _, row in duplicated_rows_identified.drop_duplicates(subset=duplicate_check_cols, keep='first').iterrows():
                 self.validation_exceptions.append({
                     'employee_name': row['employee_name'],
                     'job_id': row['job_id'],
                     'client_job_number': row.get('client_job_number', ''),
                     'contact_name': row.get('contact_name', ''),
-                    'job_address': row.get('job_address', ''),
-                    'issues': f'Exact Duplicate Record (Row index: {idx})'
+                    'job_address': row.get('job_address', ''), # Use the actual job_address if present
+                    'issues': 'Exact Duplicate Record (only first instance processed)'
                 })
             # Remove duplicates, keeping only the first occurrence for accurate calculations
             df_cleaned = df_cleaned.drop_duplicates(subset=duplicate_check_cols, keep='first').copy()
-            print(f"  Removed exact duplicate records for processing. Remaining: {len(df_cleaned)}")
-
+            print(f"Removed exact duplicate records for processing. Remaining unique records: {len(df_cleaned)}.")
 
         # Step 3: Refine 'is_call_out' flag.
+        # Convert to string and strip whitespace for robust comparison.
+        df_cleaned['is_call_out'] = df_cleaned['is_call_out'].astype(str).str.strip()
+        df_cleaned['item_number'] = df_cleaned['item_number'].astype(str).str.strip() 
+        
+        # Set 'is_call_out' to True if the 'Call Out' column explicitly indicates it, OR
+        # if 'EMEG' (Emergency) is found in the 'Item Number' field.
         df_cleaned['is_call_out'] = df_cleaned.apply(lambda row: \
             row['is_call_out'].lower() == 'true' or \
             'yes' in row['is_call_out'].lower() or \
             'emeg' in row['item_number'].lower(),
             axis=1
         )
-        print(f"  Call Out jobs identified: {df_cleaned['is_call_out'].sum()}")
         
         # Step 4: Process and clean 'lunch_deduction'.
-        # Ensure 'reported_hours' is numeric BEFORE calculating duration/consolidation
-        df_cleaned['reported_hours'] = pd.to_numeric(df_cleaned['reported_hours'], errors='coerce')
-
         df_cleaned['lunch_deduction'] = pd.to_numeric(df_cleaned['lunch_deduction'], errors='coerce').fillna(0.0)
-        df_cleaned['lunch_deduction'] = df_cleaned['lunch_deduction'].abs() 
-        df_cleaned['lunch_deduction'] = df_cleaned['lunch_deduction'].clip(upper=1.0) 
+        df_cleaned['lunch_deduction'] = df_cleaned['lunch_deduction'].abs() # Convert negative deductions to positive
+        df_cleaned['lunch_deduction'] = df_cleaned['lunch_deduction'].clip(upper=1.0) # Cap at 1 hour (as 0.5 is typical)
 
         # Step 5: Parse datetime columns and filter out invalid date/time entries.
         df_cleaned['start_datetime'] = pd.to_datetime(df_cleaned['start_time'], errors='coerce')
         df_cleaned['end_datetime'] = pd.to_datetime(df_cleaned['end_time'], errors='coerce')
         
-        valid_date_time_entries_filter = df_cleaned['start_datetime'].notna() & df_cleaned['end_datetime'].notna()
-        invalid_datetime_count = (~valid_date_time_entries_filter).sum()
+        valid_date_time_entries = df_cleaned['start_datetime'].notna() & df_cleaned['end_datetime'].notna()
+        invalid_datetime_count = (~valid_date_time_entries).sum()
         if invalid_datetime_count > 0:
-            print(f"  Filtered out {invalid_datetime_count} records due to invalid date/time data. Remaining: {len(df_cleaned[valid_date_time_entries_filter])}")
-            for idx, row in df_cleaned[~valid_date_time_entries_filter].iterrows():
+            print(f"Filtered out {invalid_datetime_count} records due to invalid date/time data.")
+            for idx, row in df_cleaned[~valid_date_time_entries].iterrows():
                 self.filtered_data.append({
                     'employee_name': row['employee_name'],
                     'job_id': row['job_id'],
@@ -255,44 +250,42 @@ class AEPOvertimeCalculator:
                     'end_time': row['end_time'],
                     'filter_reason': 'Invalid date/time format'
                 })
-        df_cleaned = df_cleaned[valid_date_time_entries_filter].copy()
+        df_cleaned = df_cleaned[valid_date_time_entries].copy()
         
-        # Step 6: Perform job-level specific validations (Line Shop Address, Work Order Format/Length, Invalid Contact).
+        # Step 6: Perform job-level specific validations (Line Shop Address, Work Order Format, Invalid Contact).
+        # 'validation_issues' column will store a list of strings if issues are found for that row.
         df_cleaned['validation_issues'] = df_cleaned.apply(self._validate_job_record, axis=1)
         
-        validation_issue_rows_count = df_cleaned['validation_issues'].apply(bool).sum()
-        if validation_issue_rows_count > 0:
-            print(f"  Identified {validation_issue_rows_count} jobs with specific validation issues. Logging them.")
-            for idx, row in df_cleaned[df_cleaned['validation_issues'].apply(bool)].iterrows():
-                self.validation_exceptions.append({
-                    'employee_name': row['employee_name'],
-                    'job_id': row['job_id'],
-                    'client_job_number': row.get('client_job_number', ''),
-                    'contact_name': row.get('contact_name', ''),
-                    'job_address': row.get('job_address', ''),
-                    'issues': ', '.join(row['validation_issues']) 
-                })
-        
+        # Collect all jobs that have validation issues into the dedicated exceptions list.
+        # NOTE: Duplicates identified in Step 2 are already logged. This collects issues from Step 6.
+        for idx, row in df_cleaned[df_cleaned['validation_issues'].apply(bool)].iterrows():
+            self.validation_exceptions.append({
+                'employee_name': row['employee_name'],
+                'job_id': row['job_id'],
+                'client_job_number': row.get('client_job_number', ''),
+                'contact_name': row.get('contact_name', ''),
+                'job_address': row.get('job_address', ''),
+                'issues': ', '.join(row['validation_issues']) # Convert list of issues to a single string
+            })
+            
         # Step 7: Consolidate pre-split records (e.g., 1-MAN and 1-MAN OT split in source data).
-        print(f"  Calling _consolidate_split_records with {len(df_cleaned)} records.")
+        # This should happen after initial cleaning and validation flagging.
         df_final = self._consolidate_split_records(df_cleaned)
-        print(f"--- Finished _clean_data. Final records: {len(df_final)} ---")
-
+        
         # Step 8: Add derived columns for time calculations (date, day of week, week start).
         df_final['work_date'] = df_final['start_datetime'].dt.date
         df_final['day_of_week'] = df_final['start_datetime'].dt.day_name()
         
+        # Calculate Sunday-to-Saturday weeks (AEP standard week definition)
         df_final['week_start'] = df_final['start_datetime'].dt.date - pd.to_timedelta((df_final['start_datetime'].dt.dayofweek + 1) % 7, unit='D')
 
         return df_final
     
-
-
     def _validate_job_record(self, row: pd.Series) -> List[str]:
         """
         Validates individual job records against specific business rules:
         - Line Shop Addresses for work locations.
-        - Work Order (Client Job #) format and length (relaxed rule).
+        - Work Order (Client Job #) format and length.
         - Invalid Contact Names for sign-off.
         Returns a list of issue descriptions if problems are found.
         """
@@ -311,53 +304,28 @@ class AEPOvertimeCalculator:
                 issues.append(f"Line Shop Address Detected: '{ls_address}'")
                 break # Flag once per record for this type of issue
         
-        # 2. Work Order (Client Job #) Validation
+        # 2. Validate Client Job # (Work Order)
         client_job_number_raw = str(row.get('client_job_number', '')).strip()
-        bill_to_account = str(row.get('bill_to_account', '')).strip()
         
-        is_format_compliant = False
+        # Try to extract the core work order number (e.g., DAP0413021) using the defined regex.
+        wo_match = self.CORE_WORK_ORDER_REGEX.search(client_job_number_raw)
+        extracted_core_wo = wo_match.group(1) if wo_match else None
         
-        # Try to find a core AEP work order pattern anywhere in the string.
-        # This determines if the basic format is acceptable.
-        
-        # Attempt to find standard 3-letter prefix + 7 digits (e.g., DAP0413021)
-        wo_match_standard = self.CORE_WORK_ORDER_STANDARD_REGEX.search(client_job_number_raw)
-        if wo_match_standard:
-            extracted_prefix = wo_match_standard.group(1)[:3].upper()
-            extracted_digits = wo_match_standard.group(1)[3:]
-            # Check if extracted prefix is one of the allowed ones AND it has 7 digits.
-            if extracted_prefix in self.ALLOWED_WO_PREFIXES and len(extracted_digits) == 7:
-                is_format_compliant = True
-        
-        # If not compliant by standard, check for single-letter prefix + 7 digits (e.g., G0000170)
-        # This covers specific known exceptions like Forestry 'G' codes or 'K' codes.
-        if not is_format_compliant:
-            wo_match_single_letter = self.CORE_WORK_ORDER_SINGLE_LETTER_REGEX.search(client_job_number_raw)
-            if wo_match_single_letter:
-                extracted_prefix = wo_match_single_letter.group(1)[:1].upper()
-                extracted_digits = wo_match_single_letter.group(1)[1:]
-                
-                # Special Rule for Forestry: "G and forestry in the account name. Good." AND "DIM 7 or DIM 07"
-                if 'FORESTRY' in bill_to_account.upper() and \
-                   extracted_prefix in self.FORESTRY_WO_INDICATORS and \
-                   len(extracted_digits) == 7 and \
-                   ('7' in extracted_digits or '07' in extracted_digits): # Check if '7' or '07' appears in the digits
-                    is_format_compliant = True
-                # General acceptance for single-letter + 7 digits (e.g., K1234567).
-                # This catches patterns like 'K1036018', which is a valid telecom WO.
-                elif len(extracted_digits) == 7:
-                    is_format_compliant = True
-
-        # Flag as "Unparseable/Non-Standard" ONLY if NO compliant core format is found
-        # AND the raw string is not empty or a known placeholder ('SEE FOREMAN').
-        # This now correctly flags numeric-only WOs that don't fit a pattern, or truly garbled ones.
-        if not is_format_compliant:
+        # Rule: "DAP projects with 7 digit numbers after the DAP are acceptable in all circumstances."
+        # This means if a core WO is found, it's considered valid in format.
+        # If no core WO is found AND the raw string is not empty or a placeholder, it's unparseable.
+        if not extracted_core_wo:
             if client_job_number_raw and client_job_number_raw.upper() != 'SEE FOREMAN':
-                issues.append(f"Unparseable/Non-Standard Work Order Format: '{client_job_number_raw}'")
+                issues.append(f"Unparseable Work Order Format: '{client_job_number_raw}'")
         
-        # REMOVED: The "Work Order String Too Long (>10 characters)" check.
-        # As per the latest rule: "as long as the field has the 3+7 anywere in the field, it is valid, even if there is other text".
-        # This implies that additional text beyond 10 characters (like "-STORM") is acceptable and does not make it non-compliant.
+        # Rule: "non compliant should be if the Job# is more than 10 characters."
+        # This applies to the *entire string* in the 'Client Job #' column.
+        # If the extracted_core_wo is 10 chars (e.g., "DAP0413021"), and the raw string is also 10 chars, it's compliant.
+        # If the raw string is > 10 chars (e.g., "DAP0413021-STORM"), it's non-compliant due to length.
+        if len(client_job_number_raw) > 10:
+            # We add this issue regardless of whether a core WO was extracted,
+            # as the rule is about the total length of the raw string.
+            issues.append(f"Work Order String Too Long (>10 characters): '{client_job_number_raw}'")
             
         # 3. Validate Contact Name
         contact_name = str(row.get('contact_name', '')).strip().upper()
@@ -371,28 +339,26 @@ class AEPOvertimeCalculator:
         Consolidates records that are pre-split into regular and overtime components (e.g., source has 1-MAN and 1-MAN OT for same shift).
         Also calculates duration for records with blank reported hours.
         """
-        print(f"  Starting _consolidate_split_records. Input records: {len(df)}")
+        print("Consolidating pre-split and blank-hour records...")
         
         consolidated_records = []
         
         # Define columns for grouping a unique time block (excluding reported_hours, item_number, and validation_issues)
-        # 'validation_issues' is explicitly excluded from grouping keys as it's a list (unhashable).
-        # It's correctly carried over from the base record.
+        # 'validation_issues' is specifically excluded here as it's a list (unhashable) and is carried over from base_record.
         group_cols_for_consolidation = [
             'employee_name', 'job_id', 'start_datetime', 'end_datetime', 
             'lunch_deduction', 'is_call_out', 'client_job_number', 
-            'contact_name', 'bill_to_account', 'job_address', 'Line_Note' 
+            'contact_name', 'bill_to_account', 'job_address', 'Line_Note' # Include Line_Note for grouping integrity
         ]
         
-        # Sort for deterministic processing of records within a group.
+        # Sort for deterministic processing of records within a group (e.e., '1-MAN' before '1-MAN OT')
         # This ensures that group_df.iloc[0] is consistently the "main" record if multiple exist.
         df_sorted = df.sort_values(by=['employee_name', 'start_datetime', 'item_number']).copy()
 
-        initial_groups_count = 0
-        
         # Iterate through unique groups, processing each group's records.
         for _, group_df in df_sorted.groupby(group_cols_for_consolidation):
-            initial_groups_count += 1
+            # Take the first record of the group as the base for the consolidated record.
+            # This ensures all non-time-related original data (including validation_issues) is carried forward.
             base_record = group_df.iloc[0].copy()
 
             regular_parts = []
@@ -411,8 +377,8 @@ class AEPOvertimeCalculator:
                 else:
                     regular_parts.append(record_row)
             
-            if len(group_df) > 1 and (regular_parts or ot_parts) and not empty_reported_hours_parts:
-                # Scenario: Actual pre-split detected (multiple source records for one time block).
+            if (regular_parts or ot_parts) and not empty_reported_hours_parts:
+                # Scenario: Record(s) were explicitly pre-split in source (e.g., 1-MAN and 1-MAN OT entries).
                 total_regular_from_source = sum(np.nan_to_num(pd.to_numeric(r.get('reported_hours', 0), errors='coerce')) for r in regular_parts)
                 total_ot_from_source = sum(np.nan_to_num(pd.to_numeric(r.get('reported_hours', 0), errors='coerce')) for r in ot_parts)
                 
@@ -423,7 +389,8 @@ class AEPOvertimeCalculator:
                 base_record['item_number'] = '1-MAN (PRE-SPLIT)' # Update item number for clarity in output
                 
                 self.calculation_log.append(
-                    f"    Consolidated PRE-SPLIT for {base_record['employee_name']} {base_record['job_id']}: {len(group_df)} records -> Reg: {total_regular_from_source:.2f}h, OT: {total_ot_from_source:.2f}h"
+                    f"Consolidated {base_record['employee_name']} {base_record['job_id']}: "
+                    f"{len(group_df)} records -> Pre-split Regular: {total_regular_from_source:.2f}h, Pre-split OT: {total_ot_from_source:.2f}h"
                 )
             elif empty_reported_hours_parts:
                 # Scenario: 'reported_hours' was blank in the source, so calculate from times.
@@ -440,17 +407,20 @@ class AEPOvertimeCalculator:
                 base_record['item_number'] = record_for_duration_calc.get('item_number', '1-MAN') # Keep original or default
                 
                 self.calculation_log.append(
-                    f"    Filled BLANK hours for {base_record['employee_name']} {base_record['job_id']}: Calculated {duration_calculated:.2f}h"
+                    f"Filled blank hours for {base_record['employee_name']} {base_record['job_id']}: Calculated {duration_calculated:.2f}h"
                 )
             else:
-                # Scenario: Single non-pre-split record or other cases where no special consolidation/filling is needed.
+                # Fallback: This case should ideally not be hit if data is well-formed
+                # and logic correctly handles pre-splits or blank hours.
                 base_record['is_pre_split'] = False 
-                # No specific log needed here, as it's a pass-through.
+                self.calculation_log.append(
+                    f"Fallback consolidation for {base_record['employee_name']} {base_record['job_id']}: Processed {len(group_df)} records, taking first as is."
+                )
             
             consolidated_records.append(base_record)
         
         result_df = pd.DataFrame(consolidated_records)
-        print(f"  Finished _consolidate_split_records. From {initial_groups_count} groups to {len(result_df)} consolidated records.")
+        print(f"Consolidated {len(df)} raw records into {len(result_df)} consolidated records.")
         return result_df
     
     def calculate_duration(self, start_time: datetime, end_time: datetime, 
@@ -907,7 +877,6 @@ class AEPOvertimeCalculator:
         """
         Exports results to an Excel file with multiple sheets:
         - 'final_data': Detailed processed job records with all calculations and flags.
-        - 'final_data_overtime_only': Filtered version of final_data showing only jobs with OT.
         - 'filtered_records': Jobs removed due to missing/invalid core data.
         - 'employee_summary': High-level summary per employee.
         - 'validation_exceptions': Detailed list of all jobs with specific validation issues.
@@ -939,11 +908,6 @@ class AEPOvertimeCalculator:
             export_df = export_df[available_columns]
             
             export_df.to_excel(writer, sheet_name='final_data', index=False)
-
-            # NEW: Add a sheet for "overtime_only" jobs
-            overtime_only_df = export_df[export_df['overtime_hours'] > 0].copy()
-            if not overtime_only_df.empty:
-                overtime_only_df.to_excel(writer, sheet_name='final_data_overtime_only', index=False)
             
             # Export records filtered during initial cleaning (e.g., missing timestamps)
             if not filtered_df.empty:
@@ -1305,7 +1269,7 @@ def get_template(template_name):
                     <ul class="small mb-0">
                         <li>Duplicate job entries (one instance kept, others flagged)</li>
                         <li>Overlapping shifts (hours set to zero, flagged)</li>
-                        <li>Work order format/length (core `3Letters+7Digits` or `1Letter+7Digits` anywhere in field is valid format)</li>
+                        <li>Work order format/length (e.g., `DAPXXXXXXX` is ok, but `DAPXXXXXXX-NOTES` is flagged for length)</li>
                         <li>Line shop addresses used as work locations (flagged)</li>
                         <li>Invalid contact names for sign-off (flagged)</li>
                     </ul>
